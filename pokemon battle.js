@@ -1,0 +1,708 @@
+// ==UserScript==
+// @name        Pokemon Battle (Full Edition)
+// @connect     pokeapi.co
+// @namespace   JellxWrld, JelloWrld, diedrchr
+// @version     1.0
+// @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
+// @include     *
+// @exclude     https://atoz.amazon.work/*
+// @exclude     https://atoz.amazon.work/
+// @grant       GM.xmlHttpRequest
+// @grant       unsafeWindow
+// @grant       GM_getValue
+// @grant       GM_setValue
+// ==/UserScript==
+
+(function() {
+'use strict';
+
+// --- Storage and helpers ---
+const STORAGE = {
+  coins: 'pkm_coins',
+  balls: 'pkm_balls',
+  potions: 'pkm_potions',
+  party: 'pkm_party',
+  starter: 'pkm_starter',
+  xp: 'pkm_xp',
+  level: 'pkm_level',
+  soundOn: 'pkm_sound_on',
+  stats: 'pkm_stats',
+  volume: 'pkm_volume'
+};
+
+function getStats(name) {
+  const allStats = getObj(STORAGE.stats);
+  return allStats[name.toLowerCase()] || { xp: 0, level: 1, hp: 100, atk: 15 };
+}
+
+function setStats(name, stats) {
+  const allStats = getObj(STORAGE.stats);
+  allStats[name.toLowerCase()] = stats;
+  setObj(STORAGE.stats, allStats);
+}
+
+const getInt = (k, d = 0) => {
+  const v = parseInt(GM_getValue(k, d), 10);
+  return isNaN(v) ? d : v;
+};
+const setInt = (k, v) => GM_setValue(k, v | 0);
+
+const getBool = k => GM_getValue(k, 'false') === 'true';
+const setBool = (k, v) => GM_setValue(k, v ? 'true' : 'false');
+
+const getObj = k => {
+  try { return JSON.parse(GM_getValue(k, '{}')) || {}; } catch { return {}; }
+};
+const setObj = (k, o) => GM_setValue(k, JSON.stringify(o));
+
+const getStr = (k, d = '') => GM_getValue(k, d);
+const setStr = (k, v) => GM_setValue(k, v);
+
+// Initialize defaults if needed
+if (!GM_getValue(STORAGE.coins)) setInt(STORAGE.coins, 100);
+if (!GM_getValue(STORAGE.balls)) setInt(STORAGE.balls, 5);
+if (!GM_getValue(STORAGE.potions)) setInt(STORAGE.potions, 2);
+if (!GM_getValue(STORAGE.party)) {
+  setObj(STORAGE.party, {});
+} else {
+  // Migration from old array party format
+  const val = GM_getValue(STORAGE.party);
+  try {
+    const parsed = JSON.parse(val);
+    if (Array.isArray(parsed)) {
+      const objParty = {};
+      for (const name of parsed) {
+        const key = name.toLowerCase();
+        objParty[key] = (objParty[key] || 0) + 1;
+      }
+      setObj(STORAGE.party, objParty);
+    }
+  } catch {}
+}
+if (!GM_getValue(STORAGE.soundOn)) setBool(STORAGE.soundOn, true);
+if (!GM_getValue(STORAGE.xp)) setInt(STORAGE.xp, 0);
+if (!GM_getValue(STORAGE.level)) setInt(STORAGE.level, 1);
+if (!GM_getValue(STORAGE.stats)) setObj(STORAGE.stats, { hp: 100, atk: 15 });
+
+const XP_TO_LEVEL = lvl => 50 + lvl * 25;
+
+// --- Sounds ---
+const SOUNDS = {
+  hit: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_attack_hit_normal.wav'),
+  ball: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_throw.wav'),
+  catch: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_success.wav'),
+  faint: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_pokemon_faint.wav'),
+  run: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_ui_quit.wav')
+};
+const parsedVol = parseFloat(getStr(STORAGE.volume, '0.4'));
+const savedVolume = isNaN(parsedVol) ? 0.4 : parsedVol;
+
+Object.entries(SOUNDS).forEach(([key, audio]) => {
+  if (audio instanceof Audio) {
+    audio.volume = savedVolume;
+  }
+});
+
+function playSound(key) {
+  const audio = SOUNDS[key];
+  if (getBool(STORAGE.soundOn) && audio instanceof Audio) {
+    // Clone to allow overlapping sound if called in quick succession
+    const clone = audio.cloneNode();
+    clone.volume = audio.volume;
+    clone.play().catch(err => console.warn('Audio play failed or blocked:', err));
+  }
+}
+
+// --- Global vars ---
+let partnerName = null, partnerSpriteUrl = null, starterName = null;
+let spriteEl = null, walkInterval = null, walkDirection = -1;
+let wrap = document.createElement('div');
+
+// --- UI and rendering ---
+Object.assign(wrap.style, {
+  position:'fixed', bottom:'0', left:'0', background:'rgba(0,0,0,0.7)',
+  color:'#fff', padding:'8px', fontFamily:'sans-serif', fontSize:'14px',
+  zIndex:'9999', display:'flex', flexDirection:'column', gap:'4px'
+});
+document.body.appendChild(wrap);
+
+function createButton(label, onClick) {
+  const btn = document.createElement('button');
+  btn.textContent = label;
+  btn.style.border = '1px solid black';
+  btn.style.padding = '4px 8px';
+  btn.style.color = 'black';
+  btn.style.background = '#fff';
+  btn.onclick = onClick;
+  return btn;
+}
+
+function renderHeader() {
+  wrap.innerHTML = '';
+
+  // SAFEGUARD: If starter not yet loaded, show placeholder message
+  const storedStarter = getStr(STORAGE.starter);
+  const stats = storedStarter ? getStats(storedStarter) : { xp: 0, level: 1, hp: 100, atk: 15 };
+  const lvl = stats.level;
+  const xp = stats.xp;
+
+  const p = document.createElement('div');
+  p.id = 'pkm-partner';
+  p.textContent = storedStarter
+    ? `Partner: ${storedStarter[0].toUpperCase() + storedStarter.slice(1)} (Lv ${lvl}) - XP: ${xp}/${XP_TO_LEVEL(lvl)} | HP: ${stats.hp} | ATK: ${stats.atk}`
+    : 'Choose your starter!';
+  wrap.appendChild(p);
+  const s = document.createElement('div');
+  s.textContent = `Coins: ${getInt(STORAGE.coins)} | Balls: ${getInt(STORAGE.balls)} | Potions: ${getInt(STORAGE.potions)}`;
+  wrap.appendChild(s);
+  const row = document.createElement('div');
+  row.style.display = 'flex'; row.style.gap = '6px';
+  row.appendChild(createButton('Battle', openBattle));
+  row.appendChild(createButton('Shop', openShop));
+  row.appendChild(createButton('Bag', openBag));
+  row.appendChild(createButton('Starter', openStarter));
+  const toggle = createButton(`Sound: ${getBool(STORAGE.soundOn) ? 'On' : 'Off'}`, () => {
+    setBool(STORAGE.soundOn, !getBool(STORAGE.soundOn));
+    renderHeader();
+  });
+  row.appendChild(toggle);
+    const volumeControl = document.createElement('input');
+  volumeControl.type = 'range';
+  volumeControl.min = 0;
+  volumeControl.max = 1;
+  volumeControl.step = 0.01;
+  volumeControl.value = getStr(STORAGE.volume, '0.4');
+  volumeControl.title = 'Sound Volume';
+  volumeControl.style.width = '100px';
+  volumeControl.oninput = () => {
+    setStr(STORAGE.volume, volumeControl.value);
+    Object.values(SOUNDS).forEach(a => a.volume = parseFloat(volumeControl.value));
+  };
+  row.appendChild(volumeControl);
+  wrap.appendChild(row);
+}
+
+// --- Partner setup ---
+function initPartner() {
+  const stored = getStr(STORAGE.starter);
+  if (stored) fetchPartner(stored);
+  else {
+    renderHeader();
+    setTimeout(openStarter, 300);
+  }
+}
+function fetchPartner(name) {
+  if (!name) return;
+  starterName = name;
+  partnerName = name[0].toUpperCase() + name.slice(1);
+  partnerSpriteUrl = `https://play.pokemonshowdown.com/sprites/ani/${name.toLowerCase()}.gif`;
+  renderHeader();
+  spawnWalkingSprite();
+}
+
+// --- Walking sprite ---
+function spawnWalkingSprite() {
+  if (spriteEl) spriteEl.remove();
+  if (walkInterval) clearInterval(walkInterval);
+
+  // Outer wrapper to handle flipping
+  const wrapper = document.createElement('div');
+  Object.assign(wrapper.style, {
+    position: 'fixed',
+    bottom: '64px', // just above your UI bar
+    left: '0px',
+    width: '64px',
+    height: '64px',
+    zIndex: '9999',
+    pointerEvents: 'none',
+    overflow: 'visible'
+  });
+
+  // Sprite image element (bobbing animation goes here)
+  spriteEl = document.createElement('img');
+  spriteEl.src = `https://play.pokemonshowdown.com/sprites/ani/${starterName.toLowerCase()}.gif`;
+  spriteEl.alt = partnerName || 'partner';
+  Object.assign(spriteEl.style, {
+    width: '64px',
+    height: '64px',
+    imageRendering: 'pixelated',
+    animation: 'bobWalk 0.6s infinite'
+  });
+
+  wrapper.appendChild(spriteEl);
+  document.body.appendChild(wrapper);
+
+  let posX = 0;
+  let dir = 1; // 1 = right, -1 = left
+  const speed = 2;
+
+  walkInterval = setInterval(() => {
+    const maxX = window.innerWidth - 64;
+    posX += dir * speed;
+
+    if (posX >= maxX) {
+      posX = maxX;
+      dir = -1;
+    } else if (posX <= 0) {
+      posX = 0;
+      dir = 1;
+    }
+
+    wrapper.style.left = `${posX}px`;
+    wrapper.style.transform = `scaleX(${dir === 1 ? -1 : 1})`; // ✅ correct direction flip
+  }, 30);
+}
+// === Starter Selection ===
+let starterPanel;
+
+function openStarter() {
+  if (starterPanel) return;
+  starterPanel = document.createElement('div');
+  Object.assign(starterPanel.style, {
+    position: 'fixed',
+    top: '50%', left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: '#fff', color: '#000',
+    padding: '12px',
+    border: '2px solid black',
+    zIndex: '10000',
+    maxHeight: '80vh',
+    overflowY: 'auto',
+    width: '320px'
+  });
+  document.body.appendChild(starterPanel);
+
+  // Add search input
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search Pokémon...';
+  Object.assign(search.style, {
+    width: '100%',
+    padding: '6px',
+    marginBottom: '8px',
+    fontSize: '16px',
+    boxSizing: 'border-box'
+  });
+  starterPanel.appendChild(search);
+
+  // List container
+  const list = document.createElement('div');
+  starterPanel.appendChild(list);
+
+  fetch('https://pokeapi.co/api/v2/pokemon?limit=1010')
+    .then(res => res.json())
+    .then(data => {
+      const names = data.results.map(p => p.name);
+      renderFilteredList(names, list, search);
+      search.addEventListener('input', () => renderFilteredList(names, list, search));
+    });
+
+  const cancel = createButton('Cancel', closeStarter);
+  cancel.style.marginTop = '10px';
+  starterPanel.appendChild(cancel);
+}
+
+function renderFilteredList(names, container, searchEl) {
+  const filter = searchEl.value.toLowerCase();
+  container.innerHTML = '';
+  names
+    .filter(name => name.includes(filter))
+    .slice(0, 50) // limit to 50 results for performance
+    .forEach(name => {
+      const btn = createButton(name[0].toUpperCase() + name.slice(1), () => {
+        setStr(STORAGE.starter, name);
+        fetchPartner(name);
+        closeStarter();
+      });
+      btn.style.margin = '2px';
+      container.appendChild(btn);
+    });
+}
+
+function closeStarter() {
+  if (starterPanel) document.body.removeChild(starterPanel);
+  starterPanel = null;
+  renderHeader();
+}
+
+// === CSS Animations ===
+// === CSS Animations ===
+const style = document.createElement('style');
+style.textContent = `
+@keyframes shake {
+  0% { transform: translate(1px, 0); }
+  25% { transform: translate(-1px, 0); }
+  50% { transform: translate(2px, 0); }
+  75% { transform: translate(-2px, 0); }
+  100% { transform: translate(1px, 0); }
+}
+@keyframes bobWalk {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}`;
+document.head.appendChild(style);
+
+// === Evolution & XP ===
+function gainXP(amount) {
+  const stats = getStats(starterName);
+  stats.xp += amount;
+  while (stats.xp >= XP_TO_LEVEL(stats.level)) {
+    stats.xp -= XP_TO_LEVEL(stats.level);
+    stats.level++;
+    stats.hp += 10;
+    stats.atk += 5;
+    alert(`🎉 ${partnerName} leveled up to ${stats.level}! HP and ATK increased.`);
+    if (stats.level === 16 || stats.level === 36) evolvePartner();
+  }
+  setStats(starterName, stats);
+  renderHeader();
+}
+
+function evolvePartner() {
+  GM.xmlHttpRequest({
+    method:'GET',
+    url:`https://pokeapi.co/api/v2/pokemon-species/${starterName}`,
+    onload(res) {
+      const species = JSON.parse(res.responseText);
+      GM.xmlHttpRequest({
+        method:'GET',
+        url: species.evolution_chain.url,
+        onload(evRes) {
+          const chain = JSON.parse(evRes.responseText).chain;
+          let current = chain;
+          while (current && current.species.name.toLowerCase() !== starterName.toLowerCase() && current.evolves_to.length) {
+            current = current.evolves_to[0];
+          }
+          if (current && current.evolves_to.length) {
+            const nextForm = current.evolves_to[0].species.name;
+            setStr(STORAGE.starter, nextForm);
+            fetchPartner(nextForm);
+            alert(`✨ Your Pokémon evolved into ${nextForm[0].toUpperCase()+nextForm.slice(1)}!`);
+          }
+        }
+      });
+    }
+  });
+}
+
+// === Battle System ===
+let battlePanel, wild, pHP, wHP, wMaxHP;
+function openBattle() {
+  if (battlePanel) return;
+  battlePanel = document.createElement('div');
+  Object.assign(battlePanel.style, {
+    position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+    background:'#222', color:'#fff', padding:'12px', border:'2px solid #fff',
+    zIndex:'10000', width:'280px'
+  });
+  document.body.appendChild(battlePanel);
+  startBattle();
+}
+function startBattle() {
+  const id = Math.floor(Math.random()*649)+1;
+  GM.xmlHttpRequest({ method:'GET', url:`https://pokeapi.co/api/v2/pokemon/${id}`, onload(res) {
+    const d = JSON.parse(res.responseText);
+    wild = { name:d.name[0].toUpperCase()+d.name.slice(1), sprite:d.sprites.front_default };
+    wMaxHP = d.stats.find(s=>s.stat.name==='hp').base_stat;
+    wHP = pHP = getStats(starterName).hp;
+    drawBattle();
+  }});
+}
+function drawBattle(msg) {
+  battlePanel.innerHTML = '';
+  if (msg) battlePanel.append(Object.assign(document.createElement('div'), { textContent: msg }));
+  const info = document.createElement('div');
+  info.innerHTML = `You HP: ${pHP}<br>${wild.name} HP: ${wHP}/${wMaxHP}`;
+  const img = document.createElement('img'); img.src = wild.sprite; img.style.width='80px'; img.style.display='block'; img.id='wild-img';
+  battlePanel.append(img, info);
+  const ctl = document.createElement('div');
+  Object.assign(ctl.style, { display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'8px' });
+  [
+    { txt:'Attack', fn:playerAttack },
+    { txt:`Ball (${getInt(STORAGE.balls)})`, fn:throwBall },
+    { txt:`Potion (${getInt(STORAGE.potions)})`, fn:usePotion },
+    { txt:'Run', fn:runAway }
+  ].forEach(a => {
+    const b = createButton(a.txt, a.fn);
+    b.style.flex = '1';
+    ctl.appendChild(b);
+  });
+  battlePanel.appendChild(ctl);
+}
+function animateHit() {
+  const el = document.getElementById('wild-img');
+  if (el) {
+    el.style.animation = 'shake 0.3s';
+    el.addEventListener('animationend', () => el.style.animation = '');
+  }
+}
+function playerAttack() {
+  const atk = getStats(starterName).atk;
+  const dmg = Math.floor(atk * (0.8 + Math.random()*0.4));
+  wHP = Math.max(0, wHP - dmg);
+  animateHit();
+  playSound('hit');
+  if (wHP <= 0) winBattle();
+  else { drawBattle(`You hit for ${dmg}!`); setTimeout(wildAttack, 500); }
+}
+function wildAttack() {
+  const dmg = Math.floor(5 + Math.random()*10);
+  pHP = Math.max(0, pHP - dmg);
+  playSound('hit');
+  if (pHP <= 0) { drawBattle(`You were knocked out...`); setTimeout(closeBattle, 1500); }
+  else drawBattle(`Wild ${wild.name} hit for ${dmg}!`);
+}
+function winBattle() {
+  const reward = 20 + Math.floor(wMaxHP / 10);
+  setInt(STORAGE.coins, getInt(STORAGE.coins) + reward);
+  gainXP(wMaxHP);
+  playSound('faint');
+  drawBattle(`You defeated ${wild.name}! +${reward} coins, +${wMaxHP} XP`);
+  setTimeout(closeBattle, 1500);
+}
+function throwBall() {
+  if (getInt(STORAGE.balls) <= 0) return drawBattle('No Poké Balls!');
+  setInt(STORAGE.balls, getInt(STORAGE.balls) - 1);
+  playSound('ball');
+  const chance = ((wMaxHP - wHP) / wMaxHP) * 0.7;
+  if (Math.random() < chance) catchIt();
+  else { drawBattle('It broke free!'); setTimeout(wildAttack, 500); }
+}
+function catchIt() {
+  const party = getObj(STORAGE.party);
+  const name = wild.name.toLowerCase();
+  party[name] = (party[name] || 0) + 1;
+  setObj(STORAGE.party, party);
+  playSound('catch');
+  drawBattle(`Caught ${wild.name}!`);
+  setTimeout(closeBattle, 1500);
+}
+function usePotion() {
+  if (getInt(STORAGE.potions) <= 0) return drawBattle('No Potions!');
+  setInt(STORAGE.potions, getInt(STORAGE.potions) - 1);
+  pHP = Math.min(getStats(starterName).hp, pHP + 30);
+  drawBattle('You used a Potion.');
+  setTimeout(wildAttack, 500);
+}
+function runAway() {
+  playSound('run');
+  drawBattle('You ran away!');
+  setTimeout(closeBattle, 500);
+}
+function closeBattle() {
+  if (battlePanel) document.body.removeChild(battlePanel);
+  battlePanel = null;
+  renderHeader();
+}
+
+// === Shop System ===
+let shopPanel;
+function openShop() {
+  if (shopPanel) return;
+  shopPanel = document.createElement('div');
+  Object.assign(shopPanel.style, {
+    position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+    padding: '12px', border: '2px solid black', background: '#fff', color: '#000', zIndex: '10000'
+  });
+  document.body.appendChild(shopPanel);
+  drawShop();
+}
+function drawShop(msg) {
+  shopPanel.innerHTML = '';
+  if (msg) shopPanel.appendChild(Object.assign(document.createElement('div'), { textContent: msg }));
+  [
+    { name: 'Poké Ball', key: STORAGE.balls, price: 20 },
+    { name: 'Potion', key: STORAGE.potions, price: 10 }
+  ].forEach(item => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'space-between';
+    row.style.margin = '6px 0';
+    const lbl = document.createElement('span');
+    lbl.textContent = `${item.name} x${getInt(item.key)}`;
+    const btn = createButton(`Buy (${item.price})`, () => {
+      if (getInt(STORAGE.coins) < item.price) return drawShop('Not enough coins.');
+      setInt(STORAGE.coins, getInt(STORAGE.coins) - item.price);
+      setInt(item.key, getInt(item.key) + 1);
+      drawShop(`Bought 1 ${item.name}.`);
+    });
+    row.append(lbl, btn);
+    shopPanel.appendChild(row);
+  });
+  const closeBtn = createButton('Close', closeShop);
+  closeBtn.style.marginTop = '10px';
+  shopPanel.appendChild(closeBtn);
+}
+function closeShop() {
+  if (shopPanel) document.body.removeChild(shopPanel);
+  shopPanel = null;
+  renderHeader();
+}
+
+let bagPanel;
+
+const RARITY = {
+  common: 10,
+  uncommon: 30,
+  rare: 100,
+  legendary: 300
+};
+
+function getRarity(name) {
+  const legendaries = ['mewtwo','lugia','ho-oh','rayquaza','dialga','palkia','giratina','zekrom','reshiram','xerneas','yveltal','zacian','zamazenta','eternatus'];
+  const rares = ['dragonite','tyranitar','salamence','metagross','garchomp','hydreigon','goodra','dragapult'];
+  const uncommons = ['pikachu','eevee','lucario','snorlax','gengar'];
+
+  name = name.toLowerCase();
+  if (legendaries.includes(name)) return 'legendary';
+  if (rares.includes(name)) return 'rare';
+  if (uncommons.includes(name)) return 'uncommon';
+  return 'common';
+}
+
+
+function openBag() {
+  if (bagPanel) return;
+  bagPanel = document.createElement('div');
+  Object.assign(bagPanel.style, {
+    position: 'fixed',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: '#fff',
+    color: '#000',
+    padding: '12px',
+    border: '2px solid black',
+    zIndex: '10000',
+    maxHeight: '80vh',
+    overflowY: 'auto',
+    width: '320px'
+  });
+  document.body.appendChild(bagPanel);
+  drawBag();
+}
+
+function drawBag(msg) {
+  const party = getObj(STORAGE.party);
+  const names = Object.keys(party);
+  bagPanel.innerHTML = '<strong>Your Pokémon Bag:</strong><br>';
+
+  // Sort Controls
+  const sortOptions = document.createElement('div');
+  sortOptions.style.margin = '6px 0';
+  sortOptions.innerHTML = 'Sort by: ';
+ let currentSort = 'name';
+    ['name', 'rarity', 'quantity'].forEach(crit => {
+    const btn = createButton(crit, () => {
+    currentSort = crit;
+    drawBagSorted(currentSort, msg);
+  });
+
+    btn.style.marginRight = '6px';
+    sortOptions.appendChild(btn);
+  });
+  bagPanel.appendChild(sortOptions);
+
+  drawBagSorted(currentSort, msg);
+}
+
+function drawBagSorted(sortBy, msg) {
+  const party = getObj(STORAGE.party);
+  const names = Object.keys(party);
+  const sorted = [...names].sort((a, b) => {
+    if (sortBy === 'name') return a.localeCompare(b);
+    if (sortBy === 'quantity') return party[b] - party[a];
+    if (sortBy === 'rarity') {
+      const ranks = { common: 1, uncommon: 2, rare: 3, legendary: 4 };
+      return ranks[getRarity(b)] - ranks[getRarity(a)];
+    }
+    return 0;
+  });
+
+  const container = document.createElement('div');
+  if (msg) {
+    const m = document.createElement('div');
+    m.textContent = msg;
+    container.appendChild(m);
+  }
+
+  if (sorted.length === 0) {
+    container.innerHTML += '<em>You haven’t caught any Pokémon yet.</em>';
+  } else {
+    sorted.forEach(name => {
+      const count = party[name];
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      row.style.margin = '4px 0';
+
+      const img = document.createElement('img');
+      img.src = `https://play.pokemonshowdown.com/sprites/ani/${name}.gif`;
+      img.style.width = '40px';
+
+      const lbl = document.createElement('span');
+      lbl.textContent = `${name[0].toUpperCase() + name.slice(1)} x${count}`;
+
+      const rarity = getRarity(name);
+      const value = RARITY[rarity];
+
+      const btnSet = createButton('Set Active', () => {
+          const oldStarter = getStr(STORAGE.starter);
+          if (oldStarter && oldStarter !== name) {
+              const party = getObj(STORAGE.party);
+              const oldName = oldStarter.toLowerCase();
+              party[oldName] = (party[oldName] || 0) + 1; // add old starter to bag
+
+              if (--party[name] <= 0) delete party[name]; // remove one instance of new starter from bag
+
+              setObj(STORAGE.party, party);
+  }
+
+  setStr(STORAGE.starter, name);
+  fetchPartner(name);
+  renderHeader();
+});
+
+
+      const btnSell = createButton(`Sell (${value}c)`, () => {
+          const p = getObj(STORAGE.party);
+          if (--p[name] <= 0) delete p[name];
+          setObj(STORAGE.party, p);
+          setInt(STORAGE.coins, getInt(STORAGE.coins) + value);
+          drawBagSorted(sortBy, `${name} sold for ${value} coins.`);
+      });
+
+      const controls = document.createElement('div');
+      controls.appendChild(btnSet);
+      controls.appendChild(btnSell);
+
+      const left = document.createElement('div');
+      left.style.display = 'flex';
+      left.style.alignItems = 'center';
+      left.style.gap = '6px';
+      left.appendChild(img);
+      left.appendChild(lbl);
+
+      row.append(left, controls);
+      container.appendChild(row);
+    });
+  }
+
+  bagPanel.innerHTML = '<strong>Your Pokémon Bag:</strong><br>';
+  bagPanel.appendChild(container);
+  const closeBtn = createButton('Close', closeBag);
+  closeBtn.style.marginTop = '10px';
+  bagPanel.appendChild(closeBtn);
+}
+
+function closeBag() {
+  if (bagPanel) document.body.removeChild(bagPanel);
+  bagPanel = null;
+  renderHeader();
+}
+
+renderHeader();
+initPartner();
+unsafeWindow.changePokemon = name => { GM_setValue(STORAGE.starter, name); fetchPartner(name); };
+})();
