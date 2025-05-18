@@ -95,8 +95,8 @@ const XP_TO_LEVEL = lvl => 50 + lvl * 25;
 // --- Sounds ---
 const SOUNDS = {
   hit: new Audio('https://play.pokemonshowdown.com/audio/move/hit.mp3'),
-  ball: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_throw.wav'),
-  catch: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_success.wav'),
+  ball: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/refs/heads/main/Throw.mp3'),
+  catch: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/06-caught-a-pokemon.mp3'),
   faint: new Audio('https://play.pokemonshowdown.com/audio/faint/faintnormal.mp3'),
   run: new Audio('https://play.pokemonshowdown.com/audio/misc/click.mp3'),
   start: new Audio('https://play.pokemonshowdown.com/audio/misc/startbattle.mp3'),
