@@ -24,7 +24,7 @@ A fully immersive, browser-based Pokémon experience built using a **Tampermonke
 - **Custom Settings**: Adjust sound volume, toggle random battles, or change your active Pokémon.
 - **Game Reset**: Full data wipe and game reset available.
 
-### 🔔 Sound & Animation
+### 🔔 Sound & Animation (Work in-progress, need to find working sounds.)
 - **Sound Effects**: Battle and catch events come with authentic Pokémon game sounds.
 - **CSS Animations**: Includes bobbing, shaking, flashing, and walking effects.
 
