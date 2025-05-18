@@ -94,11 +94,14 @@ const XP_TO_LEVEL = lvl => 50 + lvl * 25;
 
 // --- Sounds ---
 const SOUNDS = {
-  hit: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_attack_hit_normal.wav'),
+  hit: new Audio('https://play.pokemonshowdown.com/audio/move/hit.mp3'),
   ball: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_throw.wav'),
   catch: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_item_pokeball_success.wav'),
-  faint: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_pokemon_faint.wav'),
-  run: new Audio('https://raw.githubusercontent.com/zeChrales/PogoAssets/master/sounds/se_ui_quit.wav')
+  faint: new Audio('https://play.pokemonshowdown.com/audio/faint/faintnormal.mp3'),
+  run: new Audio('https://play.pokemonshowdown.com/audio/misc/click.mp3'),
+  start: new Audio('https://play.pokemonshowdown.com/audio/misc/startbattle.mp3'),
+  victory: new Audio('https://play.pokemonshowdown.com/audio/misc/victory.mp3'),
+  lose: new Audio('https://play.pokemonshowdown.com/audio/misc/lose.mp3')
 };
 const parsedVol = parseFloat(getStr(STORAGE.volume, '0.4'));
 const savedVolume = isNaN(parsedVol) ? 0.4 : parsedVol;
@@ -543,6 +546,7 @@ function openBattle() {
     zIndex:'10000', width:'280px'
   });
   document.body.appendChild(battlePanel);
+  playSound('start');
   startBattle();
 }
 function startBattle() {
@@ -649,6 +653,7 @@ function wildAttack() {
   playSound('hit');
 
   if (pHP <= 0) {
+    playSound('lose');
     drawBattle(`You were knocked out...`);
     setTimeout(closeBattle, 1500);
   } else {
@@ -677,7 +682,7 @@ if (rarity === 'uncommon') {
 setInt(STORAGE.coins, getInt(STORAGE.coins) + reward);
 gainXP(Math.floor(xp));
 
-  playSound('faint');
+  playSound('victory');
   drawBattle(`You defeated ${wild.name}! +${reward} coins, +${wMaxHP} XP`);
   setTimeout(closeBattle, 1500);
 }
