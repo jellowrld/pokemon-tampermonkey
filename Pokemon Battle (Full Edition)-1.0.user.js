@@ -5,8 +5,6 @@
 // @version     1.0
 // @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
 // @include     *
-// @exclude     https://atoz.amazon.work/*
-// @exclude     https://atoz.amazon.work/
 // @grant       GM.xmlHttpRequest
 // @grant       unsafeWindow
 // @grant       GM_getValue
