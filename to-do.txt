@@ -1,0 +1,5 @@
+a display for master balls
+more attacks (pokemon based)
+add types to pokemons
+add a tag that displays the rarity of pokemon during battle
+ensure evolved forms of pokemon can be encountered
