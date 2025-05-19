@@ -94,14 +94,14 @@ const XP_TO_LEVEL = lvl => 50 + lvl * 25;
 
 // --- Sounds ---
 const SOUNDS = {
-  hit: new Audio('https://play.pokemonshowdown.com/audio/move/hit.mp3'),
+  hit: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/hit.mp3'),
   ball: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/Throw.mp3'),
   catch: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/06-caught-a-pokemon.mp3'),
-  faint: new Audio('https://play.pokemonshowdown.com/audio/faint/faintnormal.mp3'),
-  run: new Audio('https://play.pokemonshowdown.com/audio/misc/click.mp3'),
-  start: new Audio('https://play.pokemonshowdown.com/audio/misc/startbattle.mp3'),
-  victory: new Audio('https://play.pokemonshowdown.com/audio/misc/victory.mp3'),
-  lose: new Audio('https://play.pokemonshowdown.com/audio/misc/lose.mp3')
+  faint: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/faint.mp3'),
+  run: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/runaway.mp3'),
+  start: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3'),
+  victory: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/victory.mp3'),
+  lose: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/lose.mp3')
 };
 const parsedVol = parseFloat(getStr(STORAGE.volume, '0.4'));
 const savedVolume = isNaN(parsedVol) ? 0.4 : parsedVol;
