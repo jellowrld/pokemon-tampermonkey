@@ -14,6 +14,29 @@
 (function() {
 'use strict';
 
+// --- Blocklist: Add domains or paths you want to skip ---
+const BLOCKLIST = [
+  /:\/\/www\.facebook\.com\/adsmanager\//, // Example: Facebook ads manager
+  /:\/\/ads\.google\./, // Google Ads
+  /:\/\/doubleclick\.net\//, // DoubleClick ad domains
+  // Add more patterns as needed
+];
+
+// Check if current URL matches any blocklist rule
+if (BLOCKLIST.some(rx => rx.test(location.href))) return;
+
+// In addition to the above blocklist:
+if (
+  window.location.hostname.endsWith('youtube.com') &&
+  (window.location.pathname.startsWith('/live_chat') || window.location.pathname.startsWith('/embed/'))
+) {
+  return;
+}
+// If running inside an iframe (ads commonly do this)
+if (window !== window.top) {
+  // Optionally, only block on specific domains
+  if (/youtube\.com|doubleclick\.net|ads\.google\./.test(window.location.hostname)) return;
+}
 // --- Storage and helpers ---
 const STORAGE = {
   coins: 'pkm_coins',
@@ -1027,8 +1050,6 @@ function resetGameData() {
   alert("Game reset complete. Reloading...");
   location.reload();
 }
-renderHeader();
-initPartner();
 renderHeader();
 initPartner();
 if (randomBattleEnabled) scheduleRandomBattle();
