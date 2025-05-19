@@ -2,7 +2,7 @@
 // @name        Pokemon Battle (Full Edition)
 // @connect     pokeapi.co
 // @namespace   JellxWrld, JelloWrld, diedrchr
-// @version     1.1
+// @version     1.2
 // @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
 // @include     *
 // @grant       GM.xmlHttpRequest
