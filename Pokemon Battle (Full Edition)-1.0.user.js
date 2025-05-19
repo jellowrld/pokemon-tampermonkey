@@ -2,7 +2,7 @@
 // @name        Pokemon Battle (Full Edition)
 // @connect     pokeapi.co
 // @namespace   JellxWrld, JelloWrld, diedrchr
-// @version     1.0
+// @version     1.1
 // @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
 // @include     *
 // @grant       GM.xmlHttpRequest
@@ -101,7 +101,8 @@ const SOUNDS = {
   run: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/runaway.mp3'),
   start: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3'),
   victory: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/victory.mp3'),
-  lose: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/lose.mp3')
+  lose: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/lose.mp3'),
+  stop: new Audio('')
 };
 const parsedVol = parseFloat(getStr(STORAGE.volume, '0.4'));
 const savedVolume = isNaN(parsedVol) ? 0.4 : parsedVol;
@@ -130,6 +131,8 @@ let wildSleepTurns = 0;
 let randomBattleEnabled = getBool('pkm_random_battles');
 let randomBattleTimer = null;
 let nextBattleTime = null;
+let battleSound = new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3');
+battleSound.loop = true;
 
 // --- UI and rendering ---
 Object.assign(wrap.style, {
@@ -546,7 +549,7 @@ function openBattle() {
     zIndex:'10000', width:'280px'
   });
   document.body.appendChild(battlePanel);
-  playSound('start');
+  battleSound.play();
   startBattle();
 }
 function startBattle() {
@@ -681,7 +684,8 @@ if (rarity === 'uncommon') {
 
 setInt(STORAGE.coins, getInt(STORAGE.coins) + reward);
 gainXP(Math.floor(xp));
-
+  battleSound.pause();
+  battleSound.currentTime = 0;
   playSound('victory');
   drawBattle(`You defeated ${wild.name}! +${reward} coins, +${wMaxHP} XP`);
   setTimeout(closeBattle, 1500);
@@ -724,6 +728,8 @@ function catchIt() {
   const name = wild.name.toLowerCase();
   party[name] = (party[name] || 0) + 1;
   setObj(STORAGE.party, party);
+  battleSound.pause();
+  battleSound.currentTime = 0;
   playSound('catch');
   drawBattle(`Caught ${wild.name}!`);
   setTimeout(closeBattle, 1500);
