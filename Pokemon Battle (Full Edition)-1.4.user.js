@@ -2,7 +2,7 @@
 // @name        Pokemon Battle (Full Edition)
 // @connect     pokeapi.co
 // @namespace   JellxWrld, JelloWrld, diedrchr
-// @version     1.2
+// @version     1.4
 // @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
 // @include     *
 // @grant       GM.xmlHttpRequest
@@ -16,27 +16,44 @@
 
 // --- Blocklist: Add domains or paths you want to skip ---
 const BLOCKLIST = [
-  /:\/\/www\.facebook\.com\/adsmanager\//, // Example: Facebook ads manager
-  /:\/\/ads\.google\./, // Google Ads
-  /:\/\/doubleclick\.net\//, // DoubleClick ad domains
-  // Add more patterns as needed
+  /:\/\/www\.facebook\.com\/adsmanager\//,
+  /:\/\/ads\.google\./,
+  /:\/\/doubleclick\.net\//,
 ];
 
 // Check if current URL matches any blocklist rule
 if (BLOCKLIST.some(rx => rx.test(location.href))) return;
 
-// In addition to the above blocklist:
+// Skip YouTube live chat and embedded content
 if (
   window.location.hostname.endsWith('youtube.com') &&
-  (window.location.pathname.startsWith('/live_chat') || window.location.pathname.startsWith('/embed/'))
+  (window.location.pathname.startsWith('/live_chat') ||
+   window.location.pathname.startsWith('/embed/'))
 ) {
   return;
 }
-// If running inside an iframe (ads commonly do this)
+
+// Skip if running inside an iframe on ad-related domains
 if (window !== window.top) {
-  // Optionally, only block on specific domains
   if (/youtube\.com|doubleclick\.net|ads\.google\./.test(window.location.hostname)) return;
 }
+
+// Skip if YouTube is in fullscreen mode
+if (
+  window.location.hostname.endsWith('youtube.com') &&
+  (document.fullscreenElement || window.innerHeight === screen.height)
+) {
+  return;
+}
+
+// Skip for Google sign-in popups
+if (
+  /accounts\.google\.com/.test(window.location.hostname) &&
+  window.opener
+) {
+  return;
+}
+
 // --- Storage and helpers ---
 const STORAGE = {
   coins: 'pkm_coins',
@@ -52,8 +69,49 @@ const STORAGE = {
   stats: 'pkm_stats',
   masterBalls: 'pkm_master_balls',
   pokestopCooldown: 'pkm_pokestop_cooldown',
-  volume: 'pkm_volume'
+  volume: 'pkm_volume',
+  mute: 'pkmn_mute'
 };
+
+const POKEAPI_VALID_FORMS = {
+  // only include forms that PokéAPI has sprites for
+  mega: ['charizard-mega-x', 'charizard-mega-y', 'mewtwo-mega-x', 'mewtwo-mega-y', 'lucario-mega', 'gyarados-mega'],
+  alolan: ['raichu-alola', 'marowak-alola', 'vulpix-alola', 'ninetales-alola'],
+  galarian: ['zigzagoon-galar', 'slowpoke-galar', 'rapidash-galar'],
+  hisuian: ['zoroark-hisui', 'braviary-hisui', 'growlithe-hisui'],
+  paldean: ['wooper-paldea']
+};
+const SPRITE_NAME_FIXES = {
+  'shaymin-land': 'shaymin',
+  'giratina-altered': 'giratina',
+  'tornadus-incarnate': 'tornadus',
+  'thundurus-incarnate': 'thundurus',
+  'landorus-incarnate': 'landorus',
+  'keldeo-ordinary': 'keldeo',
+  'meloetta-aria': 'meloetta',
+  'lycanroc-midday': 'lycanroc',
+  'zygarde-50': 'zygarde',
+  'wishiwashi-solo': 'wishiwashi'
+  // Add more as needed
+};
+
+function getRandomForm(baseName) {
+  const isShiny = Math.random() < 0.05;
+  const allForms = Object.entries(POKEAPI_VALID_FORMS)
+    .flatMap(([formType, names]) => names.map(name => ({ formType, name })));
+
+  const possibleForms = allForms.filter(f => f.name.startsWith(baseName.toLowerCase()));
+
+  let form = null;
+  if (possibleForms.length && Math.random() < 0.12) {
+    form = possibleForms[Math.floor(Math.random() * possibleForms.length)];
+  }
+
+  const formName = form ? form.name : baseName.toLowerCase();
+  const displayName = `${isShiny ? 'Shiny ' : ''}${form ? form.formType[0].toUpperCase() + form.formType.slice(1) + ' ' : ''}${baseName}`;
+
+  return { isShiny, formName, displayName };
+}
 
 function getStats(name) {
   const allStats = getObj(STORAGE.stats);
@@ -125,7 +183,8 @@ const SOUNDS = {
   start: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3'),
   victory: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/victory.mp3'),
   lose: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/lose.mp3'),
-  stop: new Audio('')
+  stop: new Audio(''),
+  battleSound: new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3')
 };
 const parsedVol = parseFloat(getStr(STORAGE.volume, '0.4'));
 const savedVolume = isNaN(parsedVol) ? 0.4 : parsedVol;
@@ -154,8 +213,7 @@ let wildSleepTurns = 0;
 let randomBattleEnabled = getBool('pkm_random_battles');
 let randomBattleTimer = null;
 let nextBattleTime = null;
-let battleSound = new Audio('https://github.com/jellowrld/pokemon-tampermonkey/raw/refs/heads/main/wildbattle.mp3');
-battleSound.loop = true;
+SOUNDS.battleSound.loop = true;
 
 // --- UI and rendering ---
 Object.assign(wrap.style, {
@@ -261,21 +319,30 @@ function fetchPartner(name) {
   if (!name) return;
   starterName = name;
   partnerName = name[0].toUpperCase() + name.slice(1);
-  partnerSpriteUrl = `https://play.pokemonshowdown.com/sprites/ani/${name.toLowerCase()}.gif`;
+
+  const isShiny = name.toLowerCase().startsWith('shiny ');
+  let rawName = isShiny ? name.toLowerCase().replace('shiny ', '') : name.toLowerCase();
+
+  // Apply sprite name fixes if needed
+  if (SPRITE_NAME_FIXES[rawName]) {
+    rawName = SPRITE_NAME_FIXES[rawName];
+  }
+
+  partnerSpriteUrl = `https://play.pokemonshowdown.com/sprites/${isShiny ? 'ani-shiny' : 'ani'}/${rawName}.gif`;
+
   renderHeader();
-  spawnWalkingSprite();
+  spawnWalkingSprite(partnerSpriteUrl);
 }
 
 // --- Walking sprite ---
-function spawnWalkingSprite() {
+function spawnWalkingSprite(spriteUrl) {
   if (spriteEl) spriteEl.remove();
   if (walkInterval) clearInterval(walkInterval);
 
-  // Outer wrapper to handle flipping
   const wrapper = document.createElement('div');
   Object.assign(wrapper.style, {
     position: 'fixed',
-    bottom: '64px', // just above your UI bar
+    bottom: '64px',
     left: '0px',
     width: '64px',
     height: '64px',
@@ -284,10 +351,9 @@ function spawnWalkingSprite() {
     overflow: 'visible'
   });
 
-  // Sprite image element (bobbing animation goes here)
   spriteEl = document.createElement('img');
   spriteEl.id = 'pkm-partner-sprite';
-  spriteEl.src = `https://play.pokemonshowdown.com/sprites/ani/${starterName.toLowerCase()}.gif`;
+  spriteEl.src = spriteUrl;
   spriteEl.alt = partnerName || 'partner';
   Object.assign(spriteEl.style, {
     width: '64px',
@@ -300,7 +366,7 @@ function spawnWalkingSprite() {
   document.body.appendChild(wrapper);
 
   let posX = 0;
-  let dir = 1; // 1 = right, -1 = left
+  let dir = 1;
   const speed = 2;
 
   walkInterval = setInterval(() => {
@@ -316,7 +382,7 @@ function spawnWalkingSprite() {
     }
 
     wrapper.style.left = `${posX}px`;
-    wrapper.style.transform = `scaleX(${dir === 1 ? -1 : 1})`; // ✅ correct direction flip
+    wrapper.style.transform = `scaleX(${dir === 1 ? -1 : 1})`;
   }, 30);
 }
 // === Starter Selection ===
@@ -392,9 +458,22 @@ function renderSettings() {
 
   // Sound On/Off Toggle
   const soundToggle = createButton(`Sound: ${getBool(STORAGE.soundOn) ? 'On' : 'Off'}`, () => {
-    setBool(STORAGE.soundOn, !getBool(STORAGE.soundOn));
-    renderSettings();
-  });
+  const current = getBool(STORAGE.soundOn);
+  const newVal = !current;
+  setBool(STORAGE.soundOn, newVal);
+
+  if (!newVal) {
+    // Stop and reset all currently playing sounds
+    Object.values(SOUNDS).forEach(audio => {
+      if (audio instanceof Audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    });
+  }
+
+  renderSettings();
+});
 
   // Volume Slider
   const volumeSlider = document.createElement('input');
@@ -405,11 +484,13 @@ function renderSettings() {
   volumeSlider.value = getStr(STORAGE.volume, '0.4');
   volumeSlider.style.width = '100%';
   volumeSlider.oninput = () => {
-    setStr(STORAGE.volume, volumeSlider.value);
-    Object.values(SOUNDS).forEach(a => {
-  a.volume = parseFloat(volumeSlider.value);
-});
-  };
+  const vol = parseFloat(volumeSlider.value);
+  setStr(STORAGE.volume, volumeSlider.value);
+  Object.values(SOUNDS).forEach(a => {
+    if (a instanceof Audio) a.volume = vol;
+  });
+};
+
 
   // Change Starter
   const starterBtn = createButton('🔄 Change Starter', openStarter);
@@ -572,31 +653,63 @@ function openBattle() {
     zIndex:'10000', width:'280px'
   });
   document.body.appendChild(battlePanel);
-  battleSound.play();
+  if (getBool(STORAGE.soundOn)) {
+  SOUNDS.battleSound.play();
+}
   startBattle();
 }
 function startBattle() {
-  const id = Math.floor(Math.random()*649)+1;
-  GM.xmlHttpRequest({ method:'GET', url:`https://pokeapi.co/api/v2/pokemon/${id}`, onload(res) {
-    const d = JSON.parse(res.responseText);
-    wild = { name:d.name[0].toUpperCase()+d.name.slice(1), sprite:d.sprites.front_default };
-    const baseHP = d.stats.find(s => s.stat.name === 'hp').base_stat;
-    const myStats = getStats(starterName);
-    const myLevel = myStats.level;
+  const id = Math.floor(Math.random() * 649) + 1;
 
-// Scale wild HP
-    const hpMultiplier = 8; // Tune as needed
-    wMaxHP = Math.floor(baseHP + myLevel * hpMultiplier);
-    wHP = pHP = myStats.hp;
+  GM.xmlHttpRequest({
+    method: 'GET',
+    url: `https://pokeapi.co/api/v2/pokemon/${id}`,
+    onload(res) {
+      const d = JSON.parse(res.responseText);
+      const baseName = d.name[0].toUpperCase() + d.name.slice(1);
 
-    drawBattle();
-  }});
+      const { isShiny, formName, displayName } = getRandomForm(baseName);
+
+      // Use Showdown sprite URLs with form-safe names
+      let showdownName = formName.toLowerCase().replace(/[^a-z0-9-]/g, '');
+      showdownName = SPRITE_NAME_FIXES[showdownName] || showdownName;
+
+      const sprite = isShiny
+        ? `https://play.pokemonshowdown.com/sprites/ani-shiny/${showdownName}.gif`
+        : `https://play.pokemonshowdown.com/sprites/ani/${showdownName}.gif`;
+
+      wild = {
+        name: displayName,
+        baseName: d.name,
+        sprite: sprite,
+        formName: formName,
+        isShiny: isShiny
+      };
+
+      const baseHP = d.stats.find(s => s.stat.name === 'hp').base_stat;
+const baseAtk = d.stats.find(s => s.stat.name === 'attack')?.base_stat || 10;
+
+const myStats = getStats(starterName);
+const myLevel = myStats.level;
+
+const hpMultiplier = 8;
+wMaxHP = Math.floor(baseHP + myLevel * hpMultiplier);
+wHP = pHP = myStats.hp;
+
+// ✅ Save scaled wild attack stat
+wild.baseAtk = Math.floor(baseAtk + myLevel * 1.0);
+
+
+      drawBattle();
+    }
+  });
 }
 function drawBattle(msg) {
   battlePanel.innerHTML = '';
   if (msg) battlePanel.append(Object.assign(document.createElement('div'), { textContent: msg }));
   const info = document.createElement('div');
   info.innerHTML = `You HP: ${pHP}<br>${wild.name} HP: ${wHP}/${wMaxHP}`;
+    info.innerHTML += `<br>Form: ${wild.form || 'Normal'} | Shiny: ${wild.isShiny ? 'Yes' : 'No'}`;
     const partnerLevel = getStats(starterName).level;
 const rarity = getRarity(wild.name);
 const rarityPenalty = { common: 1, uncommon: 1.2, rare: 1.5, legendary: 2 }[rarity];
@@ -670,15 +783,15 @@ function wildAttack() {
     return;
   }
 
-  const myLevel = getStats(starterName).level;
-  const baseDmg = 5 + Math.random() * 10;
-  const dmg = Math.floor(baseDmg + myLevel * 0.5);
+  const dmg = Math.floor((wild.baseAtk || 10) * (0.8 + Math.random() * 0.4));
 
   pHP = Math.max(0, pHP - dmg);
   animatePartnerHit();
   playSound('hit');
 
   if (pHP <= 0) {
+    SOUNDS.battleSound.pause();
+    SOUNDS.battleSound.currentTime = 0;
     playSound('lose');
     drawBattle(`You were knocked out...`);
     setTimeout(closeBattle, 1500);
@@ -707,8 +820,8 @@ if (rarity === 'uncommon') {
 
 setInt(STORAGE.coins, getInt(STORAGE.coins) + reward);
 gainXP(Math.floor(xp));
-  battleSound.pause();
-  battleSound.currentTime = 0;
+  SOUNDS.battleSound.pause();
+  SOUNDS.battleSound.currentTime = 0;
   playSound('victory');
   drawBattle(`You defeated ${wild.name}! +${reward} coins, +${wMaxHP} XP`);
   setTimeout(closeBattle, 1500);
@@ -748,11 +861,12 @@ else { drawBattle(`It broke free from the ${useBall} ball!`); setTimeout(wildAtt
 }
 function catchIt() {
   const party = getObj(STORAGE.party);
-  const name = wild.name.toLowerCase();
-  party[name] = (party[name] || 0) + 1;
+  const key = wild.name.toLowerCase(); // includes form + shiny in name
+  party[key] = (party[key] || 0) + 1;
   setObj(STORAGE.party, party);
-  battleSound.pause();
-  battleSound.currentTime = 0;
+
+  SOUNDS.battleSound.pause();
+  SOUNDS.battleSound.currentTime = 0;
   playSound('catch');
   drawBattle(`Caught ${wild.name}!`);
   setTimeout(closeBattle, 1500);
@@ -765,6 +879,8 @@ function usePotion() {
   setTimeout(wildAttack, 500);
 }
 function runAway() {
+  SOUNDS.battleSound.pause();
+  SOUNDS.battleSound.currentTime = 0;
   playSound('run');
   drawBattle('You ran away!');
   setTimeout(closeBattle, 500);
@@ -841,7 +957,6 @@ function getRarity(name) {
   if (uncommons.includes(name)) return 'uncommon';
   return 'common';
 }
-
 
 function openBag() {
   if (bagPanel) return;
@@ -961,11 +1076,20 @@ function drawBagSorted(sortBy, msg) {
       row.style.margin = '4px 0';
 
       const img = document.createElement('img');
-      img.src = `https://play.pokemonshowdown.com/sprites/ani/${name}.gif`;
+      let isShiny = name.toLowerCase().includes('shiny');
+let rawName = name.toLowerCase().replace('shiny ', ''); // remove "Shiny " if present
+
+// Fix known form names if needed (optional: use SPRITE_NAME_FIXES here)
+if (SPRITE_NAME_FIXES[rawName]) {
+  rawName = SPRITE_NAME_FIXES[rawName];
+}
+
+img.src = `https://play.pokemonshowdown.com/sprites/${isShiny ? 'ani-shiny' : 'ani'}/${rawName}.gif`;
+
       img.style.width = '40px';
 
       const lbl = document.createElement('span');
-      lbl.textContent = `${name[0].toUpperCase() + name.slice(1)} x${count}`;
+      lbl.textContent = `${name} x${count}`;
 
       const rarity = getRarity(name);
 const stats = getStats(name);
