@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name        Pokemon Battle (Full Edition)
+// @author      JellxWrld(@diedrchr), DStokesNCStudio9@esrobbie)
 // @connect     pokeapi.co
-// @namespace   JellxWrld, JelloWrld, diedrchr
-// @version     1.4
+// @namespace   dstokesncstudio.com
+// @version     1.2
 // @description Full version with XP, evolution, stats, sound, shop, battles, and walking partner — persistent across sites.
 // @include     *
 // @grant       GM.xmlHttpRequest
